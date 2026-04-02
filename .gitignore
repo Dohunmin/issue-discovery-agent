@@ -1,4 +1,6 @@
 .env
+.instagram_cookies.json
 __pycache__/
 *.pyc
 .bkit/
+logs/

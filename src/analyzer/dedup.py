@@ -1,6 +1,7 @@
 """제목 유사도 기반 중복 제거 모듈"""
 
 from difflib import SequenceMatcher
+from src.logger import log
 
 SIMILARITY_THRESHOLD = 0.6
 
@@ -41,5 +42,5 @@ def deduplicate_articles(articles: list[dict]) -> list[dict]:
         deduplicated.append(representative)
 
     removed = len(articles) - len(deduplicated)
-    print(f"[Dedup] {len(articles)}개 → {len(deduplicated)}개 (중복 {removed}개 제거)")
+    log(f"[Dedup] {len(articles)}개 -> {len(deduplicated)}개 (중복 {removed}개 제거)")
     return deduplicated
