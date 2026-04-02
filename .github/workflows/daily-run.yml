@@ -21,8 +21,10 @@ jobs:
           playwright install chromium
 
       - name: Write Instagram cookies
-        if: ${{ secrets.INSTAGRAM_COOKIES != '' }}
-        run: echo '${{ secrets.INSTAGRAM_COOKIES }}' > .instagram_cookies.json
+        env:
+          INSTAGRAM_COOKIES: ${{ secrets.INSTAGRAM_COOKIES }}
+        if: env.INSTAGRAM_COOKIES != ''
+        run: echo "$INSTAGRAM_COOKIES" > .instagram_cookies.json
 
       - name: Run agent
         env:
