@@ -27,9 +27,9 @@ def main():
     logger.log("\n[2/5] 뉴스 중복 제거 중...")
     rss_articles = deduplicate_articles(rss_articles)
 
-    # 3. 3단계 AI 이슈 선정 (SNS 필터 → 뉴스 Top30 → 최종 Top10)
+    # 3. 3단계 AI 이슈 선정 (SNS 필터 → 뉴스 Top30 → 최종 Top10 + 모델 자체 Top3)
     logger.log("\n[3/5] AI 이슈 선정 중 (3단계)...")
-    topics = select_topics(rss_articles, instagram_posts_by_account)
+    topics, model_picks = select_topics(rss_articles, instagram_posts_by_account)
 
     if not topics:
         logger.log("선정된 이슈가 없습니다. 종료합니다.")
@@ -42,7 +42,7 @@ def main():
 
     # 5. Discord 전송
     logger.log("\n[5/5] Discord 전송 중...")
-    send_to_discord(topics)
+    send_to_discord(topics, model_picks)
 
     logger.log("\n=== 이슈 디스커버리 에이전트 완료 ===")
     logger.close()

@@ -1,6 +1,7 @@
 import json
 from openai import OpenAI
-from src.config import OPENAI_API_KEY, SNS_FILTER_PROMPT, STAGE1_PROMPT, STAGE2_PROMPT
+from src.config import OPENAI_API_KEY, SNS_FILTER_PROMPT, STAGE1_PROMPT, STAGE2_PROMPT, MODEL_PICKS_PROMPT
+from src.analyzer.preference import load_preference_vector, score_candidates
 from src.logger import log
 
 
@@ -8,14 +9,15 @@ def select_topics(
     rss_articles: list[dict],
     instagram_posts_by_account: dict[str, list[dict]],
 ) -> list[dict]:
-    """3단계 AI 선정:
-    - SNS 필터: 계정당 7개 → AI가 3개 선택 = 9개
+    """3단계 AI 선정 + 취향 벡터 가산점:
+    - SNS 필터: 계정당 5개 → AI가 2~3개 선택
     - Stage 1: 뉴스 전체 → Top 30
-    - Stage 2: 뉴스 30 + SNS 9 = ~39건 → Top 10
+    - 취향 벡터: Stage 1 결과 + SNS에 preference_score 부여
+    - Stage 2: 뉴스 30 + SNS + 취향 점수 → Top 10
     """
     client = OpenAI(api_key=OPENAI_API_KEY)
 
-    # SNS 필터: 계정당 AI가 3개씩 선택
+    # SNS 필터: 계정당 AI가 2~3개씩 선택
     log("[SNS 필터] 계정별 게시물 분석 중...")
     filtered_sns = _filter_instagram(client, instagram_posts_by_account)
     log(f"[SNS 필터] 총 {len(filtered_sns)}개 게시물 선정 완료")
@@ -30,15 +32,31 @@ def select_topics(
         title = a.get("title", a.get("canonical_title", ""))
         log(f"  {i}. [{a.get('category','')}] {title[:70]}")
 
-    # Stage 2: 뉴스 30 + SNS 9 → 최종 Top 10
-    log("[Stage 2] 뉴스 + SNS 합산 -> Top 10 선정 중...")
+    # 취향 벡터 로드 + 후보에 점수 부여
+    log("[Preference] 취향 벡터 로드 중...")
+    pref_data = load_preference_vector(client)
+    if pref_data:
+        top30_articles = score_candidates(client, pref_data, top30_articles, text_key="title")
+        filtered_sns = score_candidates(client, pref_data, filtered_sns, text_key="caption")
+
+    # Stage 2A: 취향 반영 Top 10
+    log("[Stage 2A] 취향 반영 → Top 10 선정 중...")
     topics = _stage2_select(client, top30_articles, filtered_sns)
-    log(f"[Stage 2] {len(topics)}개 이슈 최종 선정 완료")
+    log(f"[Stage 2A] {len(topics)}개 이슈 최종 선정 완료")
     for t in topics:
+        t["selection_type"] = "preference"
         log(f"  #{t.get('rank','')} {t.get('original_title', t.get('canonical_title',''))[:70]}")
         log(f"     why_now: {t.get('why_now','')[:80]}")
 
-    return topics
+    # Stage 2B: 모델 자체 판단 Top 3 (취향 정보 없이, 비교용)
+    log("[Stage 2B] 모델 자체 판단 → Top 3 선정 중...")
+    model_picks = _stage2_model_picks(client, top30_articles, filtered_sns)
+    log(f"[Stage 2B] {len(model_picks)}개 모델 자체 선정")
+    for t in model_picks:
+        t["selection_type"] = "model_pick"
+        log(f"  #{t.get('rank','')} {t.get('original_title', t.get('canonical_title',''))[:70]}")
+
+    return topics, model_picks
 
 
 def _filter_instagram(
@@ -163,9 +181,66 @@ def _stage2_select(
         return []
 
 
-def _enforce_diversity(topics: list[dict]) -> list[dict]:
-    """동일 카테고리 최대 3개로 제한하는 후처리."""
-    if len(topics) <= 10:
+def _stage2_model_picks(
+    client: OpenAI,
+    top30_articles: list[dict],
+    filtered_sns: list[dict],
+) -> list[dict]:
+    """모델 자체 판단 Top 3 (취향 정보 없이 순수 프롬프트 기준)."""
+    plain_text = _build_plain_text(top30_articles, filtered_sns)
+
+    response = client.chat.completions.create(
+        model="gpt-4o",
+        messages=[
+            {"role": "system", "content": MODEL_PICKS_PROMPT},
+            {"role": "user", "content": plain_text},
+        ],
+        temperature=0.5,
+        response_format={"type": "json_object"},
+    )
+
+    raw = response.choices[0].message.content
+    try:
+        result = json.loads(raw)
+        if isinstance(result, list):
+            return result[:3]
+        elif isinstance(result, dict):
+            return result.get("topics", result.get("issues", []))[:3]
+        return []
+    except json.JSONDecodeError:
+        log(f"[Stage 2B] JSON 파싱 실패: {raw[:200]}")
+        return []
+
+
+def _build_plain_text(
+    top30_articles: list[dict],
+    filtered_sns: list[dict],
+) -> str:
+    """모델 자체 판단용: 취향 정보 없는 순수 후보 목록."""
+    lines = [f"=== 뉴스 ({len(top30_articles)}건) ==="]
+    for i, art in enumerate(top30_articles, 1):
+        title = art.get("title", art.get("canonical_title", ""))
+        desc = art.get("description", "")
+        category = art.get("category", "")
+        lines.append(f"{i}. [{category}] {title} | {desc[:200]}")
+
+    lines.append(f"\n=== 인스타그램 SNS ({len(filtered_sns)}건) ===")
+    for i, post in enumerate(filtered_sns, 1):
+        lines.append(
+            f"{i}. @{post.get('account', '')}: {post.get('caption', '')[:300]} "
+            f"{' '.join(post.get('hashtags', []))}"
+        )
+
+    return "\n".join(lines)
+
+
+def _enforce_diversity(topics: list[dict], max_per_category: int = 3) -> list[dict]:
+    """동일 카테고리 최대 N개로 제한하는 후처리.
+
+    source_ref 기반으로 뉴스/SNS 비율을 조절한다.
+    토픽 수와 무관하게 항상 다양성 체크를 실행한다.
+    """
+    if not topics:
         return topics
 
     category_count: dict[str, int] = {}
@@ -173,22 +248,22 @@ def _enforce_diversity(topics: list[dict]) -> list[dict]:
     overflow = []
 
     for t in topics:
-        # source_ref에서 카테고리 추정 (뉴스#N → 뉴스, SNS#N → SNS)
         ref = t.get("source_ref", "")
         cat = ref.split("#")[0] if "#" in ref else "unknown"
         count = category_count.get(cat, 0)
 
-        if count < 3:
+        if count < max_per_category:
             filtered.append(t)
             category_count[cat] = count + 1
         else:
             overflow.append(t)
 
-    # 10개 채우기
-    while len(filtered) < 10 and overflow:
+    # 원래 개수까지 채우기
+    target = min(len(topics), 10)
+    while len(filtered) < target and overflow:
         filtered.append(overflow.pop(0))
 
-    return filtered[:10]
+    return filtered[:target]
 
 
 def _build_rss_text(articles: list[dict]) -> str:
@@ -206,21 +281,31 @@ def _build_combined_text(
     top30_articles: list[dict],
     filtered_sns: list[dict],
 ) -> str:
-    """2단계용: Top30 뉴스 + AI 선별된 SNS 합산 텍스트."""
+    """2단계용: Top30 뉴스 + AI 선별된 SNS 합산 텍스트 (취향 점수 포함)."""
+    has_pref = any("preference_label" in a for a in top30_articles)
+
     lines = [f"=== 1차 선별된 뉴스 ({len(top30_articles)}건) ==="]
+    if has_pref:
+        lines.append("(운영자 취향: 운영자의 과거 선호도 기반 등급. '매우 높음'인 주제를 우선 선정하세요)")
     for i, art in enumerate(top30_articles, 1):
         title = art.get("title", art.get("canonical_title", ""))
         desc = art.get("description", "")
         reason = art.get("reason", "")
         category = art.get("category", "")
-        lines.append(f"{i}. [{category}] {title} | {desc[:200]}")
+        label = art.get("preference_label", "")
+        pref_tag = f" [운영자취향:{label}]" if label else ""
+        lines.append(f"{i}. [{category}]{pref_tag} {title} | {desc[:200]}")
         if reason:
             lines.append(f"   -> 선정 이유: {reason}")
 
     lines.append(f"\n=== AI 선별된 인스타그램 SNS ({len(filtered_sns)}건) ===")
+    if has_pref:
+        lines.append("(운영자 취향: 운영자의 과거 선호도 기반 등급. '매우 높음'인 주제를 우선 선정하세요)")
     for i, post in enumerate(filtered_sns, 1):
+        label = post.get("preference_label", "")
+        pref_tag = f" [운영자취향:{label}]" if label else ""
         lines.append(
-            f"{i}. @{post.get('account', '')}: {post.get('caption', '')[:300]} "
+            f"{i}. @{post.get('account', '')}:{pref_tag} {post.get('caption', '')[:300]} "
             f"{' '.join(post.get('hashtags', []))}"
         )
 
