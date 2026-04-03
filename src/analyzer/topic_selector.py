@@ -8,14 +8,19 @@ from src.logger import log
 def select_topics(
     rss_articles: list[dict],
     instagram_posts_by_account: dict[str, list[dict]],
-) -> list[dict]:
-    """3단계 AI 선정 + 취향 벡터 가산점:
-    - SNS 필터: 계정당 5개 → AI가 2~3개 선택
-    - Stage 1: 뉴스 전체 → Top 30
-    - 취향 벡터: Stage 1 결과 + SNS에 preference_score 부여
-    - Stage 2: 뉴스 30 + SNS + 취향 점수 → Top 10
+    youtube_videos: list[dict] | None = None,
+    community_posts: list[dict] | None = None,
+) -> tuple[list[dict], list[dict]]:
+    """다중 소스 AI 선정 + 취향 벡터:
+    - SNS 필터: 인스타 계정당 2~3개 선택
+    - Stage 1: 뉴스 + YouTube + 커뮤니티 → Top 30
+    - 취향 벡터: 전체 후보에 preference_score 부여
+    - Stage 2A: 취향 반영 Top 10
+    - Stage 2B: 모델 자체 Top 3 (비교용)
     """
     client = OpenAI(api_key=OPENAI_API_KEY)
+    youtube_videos = youtube_videos or []
+    community_posts = community_posts or []
 
     # SNS 필터: 계정당 AI가 2~3개씩 선택
     log("[SNS 필터] 계정별 게시물 분석 중...")
@@ -24,10 +29,10 @@ def select_topics(
     for s in filtered_sns:
         log(f"  > @{s.get('account','')}: {s.get('caption','')[:80]}")
 
-    # Stage 1: 뉴스에서 Top 30 선별
-    log("[Stage 1] 뉴스에서 Top 30 선별 중...")
-    top30_articles = _stage1_filter(client, rss_articles)
-    log(f"[Stage 1] {len(top30_articles)}개 기사 선별 완료")
+    # Stage 1: 뉴스 + YouTube + 커뮤니티에서 Top 30 선별
+    log("[Stage 1] 뉴스 + YouTube + 커뮤니티에서 Top 30 선별 중...")
+    top30_articles = _stage1_filter(client, rss_articles, youtube_videos, community_posts)
+    log(f"[Stage 1] {len(top30_articles)}개 선별 완료")
     for i, a in enumerate(top30_articles, 1):
         title = a.get("title", a.get("canonical_title", ""))
         log(f"  {i}. [{a.get('category','')}] {title[:70]}")
@@ -120,9 +125,14 @@ def _filter_instagram(
     return selected_posts
 
 
-def _stage1_filter(client: OpenAI, articles: list[dict]) -> list[dict]:
-    """1단계: 전체 뉴스에서 Top 30을 선별한다."""
-    rss_text = _build_rss_text(articles)
+def _stage1_filter(
+    client: OpenAI,
+    articles: list[dict],
+    youtube_videos: list[dict] | None = None,
+    community_posts: list[dict] | None = None,
+) -> list[dict]:
+    """1단계: 뉴스 + YouTube + 커뮤니티에서 Top 30을 선별한다."""
+    rss_text = _build_stage1_text(articles, youtube_videos or [], community_posts or [])
 
     response = client.chat.completions.create(
         model="gpt-4o",
@@ -274,6 +284,52 @@ def _build_rss_text(articles: list[dict]) -> str:
             f"{i}. [{art.get('category', '')}] {art.get('title', '')} | "
             f"{art.get('description', '')[:200]}"
         )
+    return "\n".join(lines)
+
+
+def _build_stage1_text(
+    articles: list[dict],
+    youtube_videos: list[dict],
+    community_posts: list[dict],
+) -> str:
+    """1단계용: 뉴스 + YouTube + 커뮤니티 통합 텍스트."""
+    lines = [f"=== 뉴스 기사 ({len(articles)}건) ===\n"]
+    for i, art in enumerate(articles, 1):
+        lines.append(
+            f"뉴스#{i}. [{art.get('category', '')}] {art.get('title', '')} | "
+            f"{art.get('description', '')[:200]}"
+        )
+
+    if youtube_videos:
+        lines.append(f"\n=== YouTube 한국 트렌딩 ({len(youtube_videos)}건, Music 제외) ===")
+        lines.append("(유튜브 인기 급상승 영상. 밈/챌린지/논란 등 2030이 실제로 보는 콘텐츠)")
+        for i, vid in enumerate(youtube_videos, 1):
+            views = vid.get("view_count", 0)
+            view_str = f"{views:,}" if views else ""
+            lines.append(
+                f"유튜브#{i}. {vid.get('title', '')} | "
+                f"{vid.get('channel', '')} | 조회수 {view_str} | "
+                f"{vid.get('description', '')[:150]}"
+            )
+
+    if community_posts:
+        dc_posts = [p for p in community_posts if p.get("source") == "dcinside_realtime_best"]
+        pann_posts = [p for p in community_posts if p.get("source") == "natepann_hot"]
+
+        if dc_posts:
+            lines.append(f"\n=== DC인사이드 실시간 베스트 ({len(dc_posts)}건) ===")
+            lines.append("(남초 커뮤니티 실시간 인기글. 추천수가 높을수록 화제)")
+            for i, post in enumerate(dc_posts, 1):
+                rec = post.get("recommend", 0)
+                lines.append(f"DC#{i}. [추천 {rec}] {post.get('title', '')}")
+
+        if pann_posts:
+            lines.append(f"\n=== 네이트판 실시간 인기 ({len(pann_posts)}건) ===")
+            lines.append("(여초 커뮤니티 실시간 인기글. 공감수가 높을수록 화제)")
+            for i, post in enumerate(pann_posts, 1):
+                rec = post.get("recommend", 0)
+                lines.append(f"네이트판#{i}. [공감 {rec}] {post.get('title', '')}")
+
     return "\n".join(lines)
 
 

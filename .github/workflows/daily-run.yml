@@ -32,4 +32,5 @@ jobs:
           GOOGLE_SHEETS_CREDS: ${{ secrets.GOOGLE_SHEETS_CREDS }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           INSTAGRAM_SEED_ACCOUNTS: ${{ secrets.INSTAGRAM_SEED_ACCOUNTS }}
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
         run: python -m src.main
