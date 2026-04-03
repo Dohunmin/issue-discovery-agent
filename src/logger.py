@@ -24,7 +24,11 @@ class TaskLogger:
         self.log(f"=== Task started at {now.strftime('%Y-%m-%d %H:%M:%S KST')} ===")
 
     def log(self, message: str) -> None:
-        print(message)
+        # Windows cp949 콘솔에서 이모지 출력 시 UnicodeEncodeError 방지
+        try:
+            print(message)
+        except UnicodeEncodeError:
+            print(message.encode("utf-8", errors="replace").decode("utf-8"))
         self._file.write(message + "\n")
         self._file.flush()
 

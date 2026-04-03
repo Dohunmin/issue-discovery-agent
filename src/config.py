@@ -77,14 +77,18 @@ RSS_FEEDS = {
         "https://news.google.com/rss/search?q=틱톡+OR+인스타+OR+유튜브+OR+숏폼+OR+챌린지+화제&hl=ko&gl=KR&ceid=KR:ko",
     ],
 
-    # Google Trends 한국 실시간 인기 검색어 (뉴스 교차 태깅용)
-    "google_trend": [
-        "https://trends.google.com/trending/rss?geo=KR",
-    ],
 }
 
-# YouTube
+# Google Trends 한국 — Stage 1 소스가 아니라, 뉴스 교차 태깅 전용
+GOOGLE_TRENDS_RSS = "https://trends.google.com/trending/rss?geo=KR"
+
+# YouTube — 인스타처럼 시드 채널 기반 수집
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY", "")
+YOUTUBE_SEED_CHANNELS = [
+    ch.strip()
+    for ch in os.getenv("YOUTUBE_SEED_CHANNELS", "").split(",")
+    if ch.strip()
+]
 
 
 # ─────────────────────────────────────────────
@@ -124,12 +128,17 @@ STAGE1_PROMPT = """당신은 한국 2030세대의 삶에 영향을 미치는 이
 이 중에서 Top 30을 선별하세요. 소스 유형에 관계없이 이슈 가치 기준으로 선정합니다.
 
 소스별 특징:
-- 뉴스: 언론 보도 기반 이슈
-- YouTube 트렌딩: 2030이 실제로 보는 콘텐츠 (밈/챌린지/논란 영상)
-- DC인사이드 실베: 남초 커뮤니티 실시간 반응 (추천수 = 화제성)
-- 네이트판 인기: 여초 커뮤니티 실시간 반응 (공감수 = 화제성)
+- 뉴스: 언론 보도 기반 이슈. [TRENDING] 태그가 붙은 기사는 Google Trends 인기 검색어와 매칭된 기사
+- YouTube 채널: 2030 이슈/트렌드를 다루는 채널의 최근 영상
+- 네이트판 인기: 여초 커뮤니티 실시간 인기글 (2030 여성이 관심 갖는 주제)
 
 커뮤니티/YouTube에서 화제인 주제가 뉴스에서도 보도되고 있다면, 그 이슈의 우선순위를 높이세요.
+
+중요 — 소스 다양성: Top 30에 반드시 아래 비율을 지키세요:
+- YouTube 채널에서 최소 3~5개 선정 (이슈/트렌드 해설 영상)
+- 네이트판 인기글에서 최소 3~5개 선정 (2030 여성 관심사)
+- 나머지는 뉴스에서 자유롭게 선정
+뉴스만으로 30개를 채우지 마세요.
 
 선정 기준:
 1. 2030세대가 직접 체감하거나 친구에게 공유할 만한 이슈인가 (채용, 주거, 교육, 소비, 문화, 밈 등)
@@ -147,11 +156,14 @@ STAGE1_PROMPT = """당신은 한국 2030세대의 삶에 영향을 미치는 이
 - 학술 논문·컨퍼런스 발표 소식
 - 기업 주가·실적 단신
 
-중요: title은 원문 제목을 **절대 수정하지 말고 그대로** 가져오세요 (뉴스, YouTube, 커뮤니티 모두).
-source_ref에는 원래 소스 번호를 그대로 적으세요 (예: "뉴스#3", "유튜브#5", "DC#2", "네이트판#1").
+중요:
+- title은 원문 제목을 **절대 수정하지 말고 그대로** 가져오세요 (뉴스, YouTube, 커뮤니티 모두).
+- source_ref에는 원래 소스 번호를 그대로 적으세요 (예: "뉴스#3", "유튜브#5", "네이트판#1").
+- **반드시 정확히 30개를 선정하세요. 30개 미만이나 초과는 안 됩니다.**
+- **같은 제목을 중복 선정하지 마세요.**
 
 JSON 형식으로 출력하세요:
-{"articles": [{"title": "원문 제목 그대로", "description": "원문 설명 그대로", "category": "...", "source_ref": "뉴스#1", "reason": "선정 이유 한 줄"}]}
+{"articles": [{"title": "원문 제목 그대로", "description": "", "category": "...", "source_ref": "뉴스#1", "reason": "선정 이유 한 줄"}]}
 """
 
 # 2단계: 뉴스 + SNS 합산 → Top 10 최종 선정

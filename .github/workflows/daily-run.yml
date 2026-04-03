@@ -33,4 +33,5 @@ jobs:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           INSTAGRAM_SEED_ACCOUNTS: ${{ secrets.INSTAGRAM_SEED_ACCOUNTS }}
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+          YOUTUBE_SEED_CHANNELS: ${{ secrets.YOUTUBE_SEED_CHANNELS }}
         run: python -m src.main

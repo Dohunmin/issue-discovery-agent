@@ -148,8 +148,21 @@ def _stage1_filter(
     try:
         result = json.loads(raw)
         if isinstance(result, dict):
-            return result.get("articles", [])
-        return result if isinstance(result, list) else []
+            items = result.get("articles", [])
+        elif isinstance(result, list):
+            items = result
+        else:
+            items = []
+
+        # 후처리: 제목 중복 제거 + 30개 강제
+        seen_titles = set()
+        deduped = []
+        for item in items:
+            title = item.get("title", "").strip()
+            if title and title not in seen_titles:
+                seen_titles.add(title)
+                deduped.append(item)
+        return deduped[:30]
     except json.JSONDecodeError:
         log(f"[Stage 1] JSON 파싱 실패: {raw[:200]}")
         return []
@@ -292,43 +305,41 @@ def _build_stage1_text(
     youtube_videos: list[dict],
     community_posts: list[dict],
 ) -> str:
-    """1단계용: 뉴스 + YouTube + 커뮤니티 통합 텍스트."""
-    lines = [f"=== 뉴스 기사 ({len(articles)}건) ===\n"]
-    for i, art in enumerate(articles, 1):
-        lines.append(
-            f"뉴스#{i}. [{art.get('category', '')}] {art.get('title', '')} | "
-            f"{art.get('description', '')[:200]}"
-        )
+    """1단계용: YouTube + 커뮤니티를 앞에, 뉴스를 뒤에 배치.
 
+    GPT positional bias 대응: 중요 소스(유튜브/커뮤니티)를 앞에 놓고,
+    뉴스는 제목만 전달하여 토큰을 절약한다.
+    """
+    lines = []
+
+    # 1) YouTube — 맨 앞 배치 (GPT가 확실히 인식하도록)
     if youtube_videos:
-        lines.append(f"\n=== YouTube 한국 트렌딩 ({len(youtube_videos)}건, Music 제외) ===")
-        lines.append("(유튜브 인기 급상승 영상. 밈/챌린지/논란 등 2030이 실제로 보는 콘텐츠)")
+        lines.append(f"=== YouTube 이슈/트렌드 채널 ({len(youtube_videos)}건) ===")
+        lines.append("2030 이슈를 다루는 채널의 최근 영상. 이 중 이슈성 있는 것을 반드시 선정하세요.")
         for i, vid in enumerate(youtube_videos, 1):
             views = vid.get("view_count", 0)
             view_str = f"{views:,}" if views else ""
             lines.append(
                 f"유튜브#{i}. {vid.get('title', '')} | "
-                f"{vid.get('channel', '')} | 조회수 {view_str} | "
-                f"{vid.get('description', '')[:150]}"
+                f"{vid.get('channel', '')} | 조회수 {view_str}"
             )
 
+    # 2) 네이트판 — YouTube 다음
     if community_posts:
-        dc_posts = [p for p in community_posts if p.get("source") == "dcinside_realtime_best"]
         pann_posts = [p for p in community_posts if p.get("source") == "natepann_hot"]
-
-        if dc_posts:
-            lines.append(f"\n=== DC인사이드 실시간 베스트 ({len(dc_posts)}건) ===")
-            lines.append("(남초 커뮤니티 실시간 인기글. 추천수가 높을수록 화제)")
-            for i, post in enumerate(dc_posts, 1):
-                rec = post.get("recommend", 0)
-                lines.append(f"DC#{i}. [추천 {rec}] {post.get('title', '')}")
-
         if pann_posts:
             lines.append(f"\n=== 네이트판 실시간 인기 ({len(pann_posts)}건) ===")
-            lines.append("(여초 커뮤니티 실시간 인기글. 공감수가 높을수록 화제)")
+            lines.append("여초 커뮤니티 실시간 인기글. 2030 여성이 실제로 관심 갖는 주제를 반드시 선정하세요.")
             for i, post in enumerate(pann_posts, 1):
-                rec = post.get("recommend", 0)
-                lines.append(f"네이트판#{i}. [공감 {rec}] {post.get('title', '')}")
+                lines.append(f"네이트판#{i}. {post.get('title', '')}")
+
+    # 3) 뉴스 — 제목만 (description 생략하여 토큰 절약)
+    lines.append(f"\n=== 뉴스 기사 ({len(articles)}건) ===")
+    for i, art in enumerate(articles, 1):
+        trending_tag = " [TRENDING]" if art.get("trending") else ""
+        lines.append(
+            f"뉴스#{i}. [{art.get('category', '')}]{trending_tag} {art.get('title', '')}"
+        )
 
     return "\n".join(lines)
 

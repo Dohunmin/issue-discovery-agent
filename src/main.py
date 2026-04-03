@@ -2,8 +2,9 @@
 
 from src.collectors.rss_collector import collect_rss
 from src.collectors.instagram_collector import collect_instagram_sync
-from src.collectors.youtube_collector import collect_youtube_trending
+from src.collectors.youtube_collector import collect_youtube_channels
 from src.collectors.community_collector import collect_community
+from src.collectors.trends_collector import collect_trend_keywords, tag_trending_articles
 from src.analyzer.dedup import deduplicate_articles
 from src.analyzer.topic_selector import select_topics
 from src.outputs.sheets_writer import write_to_sheets
@@ -19,7 +20,7 @@ def main():
     logger.log("[1/6] 데이터 수집 중...")
     rss_articles = collect_rss()
     instagram_posts_by_account = collect_instagram_sync()
-    youtube_videos = collect_youtube_trending()
+    youtube_videos = collect_youtube_channels()
     community_posts = collect_community()
 
     if not rss_articles and not instagram_posts_by_account and not youtube_videos and not community_posts:
@@ -27,9 +28,11 @@ def main():
         logger.close()
         return
 
-    # 2. 뉴스 중복 제거
-    logger.log("\n[2/6] 뉴스 중복 제거 중...")
+    # 2. 뉴스 중복 제거 + 트렌드 태깅
+    logger.log("\n[2/6] 뉴스 중복 제거 + 트렌드 태깅 중...")
     rss_articles = deduplicate_articles(rss_articles)
+    trend_keywords = collect_trend_keywords()
+    rss_articles = tag_trending_articles(rss_articles, trend_keywords)
 
     # 3. AI 이슈 선정 (모든 소스 통합)
     logger.log("\n[3/6] AI 이슈 선정 중...")
