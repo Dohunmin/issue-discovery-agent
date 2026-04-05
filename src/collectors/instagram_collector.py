@@ -1,6 +1,7 @@
 import asyncio
 import json
 import random
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from playwright.async_api import async_playwright, BrowserContext
 from src.config import (
@@ -10,7 +11,8 @@ from src.config import (
 )
 from src.logger import log
 
-POSTS_TO_SCAN = 5
+POSTS_TO_SCAN = 10  # 많이 가져와서 날짜 필터로 거름
+DAYS_WINDOW = 7
 COOKIES_FILE = Path(__file__).parent.parent.parent / ".instagram_cookies.json"
 
 
@@ -180,11 +182,25 @@ async def _scrape_account(page, account: str) -> list[dict]:
             await _human_delay(1.5, 3.0)
             await _scroll_page(page)
 
+        cutoff = datetime.now(timezone.utc) - timedelta(days=DAYS_WINDOW)
+
         for i, link in enumerate(post_links):
             try:
                 await _human_delay(1.5, 3.5)
                 await page.goto(link, wait_until="domcontentloaded", timeout=20000)
                 await _human_delay(2.0, 4.0)
+
+                # 날짜 확인: 7일 이내 게시물만 수집 (고정 게시물 자동 제외)
+                posted_at = ""
+                time_el = await page.query_selector("time[datetime]")
+                if time_el:
+                    dt_str = await time_el.get_attribute("datetime")
+                    if dt_str:
+                        posted_at = dt_str
+                        posted_dt = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
+                        if posted_dt < cutoff:
+                            log(f"  @{account}: 스킵 (7일 초과) {dt_str[:10]}")
+                            continue
 
                 caption = await _extract_caption(page)
                 hashtags = [
@@ -197,7 +213,7 @@ async def _scrape_account(page, account: str) -> list[dict]:
                     "account": account,
                     "hashtags": hashtags,
                     "url": link,
-                    "posted_at": "",
+                    "posted_at": posted_at,
                 })
             except Exception as e:
                 log(f"[Instagram] 게시물 수집 실패 ({link}): {e}")
