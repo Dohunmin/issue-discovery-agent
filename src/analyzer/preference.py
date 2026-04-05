@@ -67,6 +67,7 @@ def _cosine_similarity(a: list[float], b: list[float]) -> float:
 
 MULTI_CENTROID_THRESHOLD = 15  # 이 개수 이상이면 클러스터링 활성화
 MULTI_CENTROID_K = 3
+BAD_PENALTY_ALPHA = 0.3  # bad 유사도의 감점 비율 (0.3 = good의 30%만큼 차감)
 
 
 def load_preference_vector(client: OpenAI) -> dict | None:
@@ -95,14 +96,21 @@ def load_preference_vector(client: OpenAI) -> dict | None:
             rating_idx = header.index("rating") if "rating" in header else -1
             title_idx = header.index("canonical_title") if "canonical_title" in header else 2
 
+            bad_texts = []
             if rating_idx >= 0:
                 for row in rows[1:]:
-                    if len(row) > rating_idx and row[rating_idx].strip() == "0":
+                    if len(row) > rating_idx:
+                        rating = row[rating_idx].strip()
                         title = row[title_idx] if len(row) > title_idx else ""
-                        if title:
+                        if not title:
+                            continue
+                        if rating == "0":
                             good_texts.append(title)
+                        elif rating == "1":
+                            bad_texts.append(title)
     except Exception as e:
         log(f"[Preference] Topic Recommender 읽기 실패: {e}")
+        bad_texts = []
 
     # 2) good_examples 시트에서 수기 예시 수집 (title + why_good 결합)
     example_texts = []
@@ -125,9 +133,12 @@ def load_preference_vector(client: OpenAI) -> dict | None:
         return None
 
     log(f"[Preference] good 데이터 로드: Topic Recommender {len(good_texts)}개 + good_examples {len(example_texts)}개")
+    log(f"[Preference] bad 데이터 로드: {len(bad_texts)}개")
 
-    # 캐시 확인: good 텍스트가 변하지 않았으면 이전 결과 재사용
-    cache_key = hashlib.sha256("|".join(sorted(all_texts)).encode()).hexdigest()
+    # 캐시 확인: good + bad 텍스트가 변하지 않았으면 이전 결과 재사용
+    cache_key = hashlib.sha256(
+        ("|".join(sorted(all_texts)) + "||BAD||" + "|".join(sorted(bad_texts))).encode()
+    ).hexdigest()
     if CACHE_PATH.exists():
         try:
             cached = json.loads(CACHE_PATH.read_text(encoding="utf-8"))
@@ -158,6 +169,14 @@ def load_preference_vector(client: OpenAI) -> dict | None:
         result = _build_multi_centroid(embeddings_np, weights)
     else:
         result = _build_single_vector(embeddings_np, weights)
+
+    # Bad 벡터: 싫어하는 토픽의 평균 벡터
+    if bad_texts and len(bad_texts) >= 5:
+        bad_embeddings = _get_embeddings_batch(client, bad_texts)
+        if bad_embeddings:
+            bad_vector = np.mean(bad_embeddings, axis=0).tolist()
+            result["bad_vector"] = bad_vector
+            log(f"[Preference] bad 벡터 생성 완료 ({len(bad_texts)}개 기반)")
 
     # 캐시 저장
     result["key"] = cache_key
@@ -238,13 +257,23 @@ def score_candidates(
     embeddings = _get_embeddings_batch(client, texts)
 
     mode = preference_data.get("mode", "single")
+    bad_vector = preference_data.get("bad_vector")
+
     for i, c in enumerate(candidates):
+        # good 점수
         if mode == "multi":
-            # max-sim: 어느 클러스터라도 맞으면 높은 점수
             centroids = preference_data["centroids"]
-            score = max(_cosine_similarity(cent, embeddings[i]) for cent in centroids)
+            good_score = max(_cosine_similarity(cent, embeddings[i]) for cent in centroids)
         else:
-            score = _cosine_similarity(preference_data["vector"], embeddings[i])
+            good_score = _cosine_similarity(preference_data["vector"], embeddings[i])
+
+        # bad 감점: good과 비슷한 주제라도 bad 패턴이면 점수 차감
+        if bad_vector:
+            bad_score = _cosine_similarity(bad_vector, embeddings[i])
+            score = good_score - BAD_PENALTY_ALPHA * bad_score
+        else:
+            score = good_score
+
         c["preference_score"] = round(score, 4)
 
     # 점수 로그
