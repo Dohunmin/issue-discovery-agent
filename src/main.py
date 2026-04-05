@@ -36,7 +36,7 @@ def main():
 
     # 3. AI 이슈 선정 (모든 소스 통합)
     logger.log("\n[3/6] AI 이슈 선정 중...")
-    topics, model_picks = select_topics(
+    topics = select_topics(
         rss_articles, instagram_posts_by_account,
         youtube_videos=youtube_videos,
         community_posts=community_posts,
@@ -53,7 +53,7 @@ def main():
 
     # 5. Discord 전송
     logger.log("\n[5/6] Discord 전송 중...")
-    send_to_discord(topics, model_picks)
+    send_to_discord(topics)
 
     logger.log("\n=== 이슈 디스커버리 에이전트 완료 ===")
     logger.close()

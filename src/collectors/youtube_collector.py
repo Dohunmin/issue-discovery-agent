@@ -106,6 +106,10 @@ def _fetch_channel_videos(youtube, channel_id: str, cutoff: datetime) -> list[di
             })
 
         log(f"  [YouTube] @{channel_name}: {len(videos)}개 영상 (7일 이내)")
+        for v in videos:
+            date = v["published_at"][:10]
+            views = v["view_count"]
+            log(f"    [{date}] {v['title'][:60]} | 조회수 {views:,}")
 
     except Exception as e:
         log(f"  [YouTube] 채널 {channel_id} 수집 실패: {e}")

@@ -1,6 +1,6 @@
 import json
 from openai import OpenAI
-from src.config import OPENAI_API_KEY, SNS_FILTER_PROMPT, STAGE1_PROMPT, STAGE2_PROMPT, MODEL_PICKS_PROMPT
+from src.config import OPENAI_API_KEY, SNS_FILTER_PROMPT, STAGE1_PROMPT, STAGE2_PROMPT
 from src.analyzer.preference import load_preference_vector, score_candidates
 from src.logger import log
 
@@ -10,7 +10,7 @@ def select_topics(
     instagram_posts_by_account: dict[str, list[dict]],
     youtube_videos: list[dict] | None = None,
     community_posts: list[dict] | None = None,
-) -> tuple[list[dict], list[dict]]:
+) -> list[dict]:
     """다중 소스 AI 선정 + 취향 벡터:
     - SNS 필터: 인스타 계정당 2~3개 선택
     - Stage 1: 뉴스 + YouTube + 커뮤니티 → Top 30
@@ -53,15 +53,7 @@ def select_topics(
         log(f"  #{t.get('rank','')} {t.get('original_title', t.get('canonical_title',''))[:70]}")
         log(f"     why_now: {t.get('why_now','')[:80]}")
 
-    # Stage 2B: 모델 자체 판단 Top 3 (취향 정보 없이, 비교용)
-    log("[Stage 2B] 모델 자체 판단 → Top 3 선정 중...")
-    model_picks = _stage2_model_picks(client, top30_articles, filtered_sns)
-    log(f"[Stage 2B] {len(model_picks)}개 모델 자체 선정")
-    for t in model_picks:
-        t["selection_type"] = "model_pick"
-        log(f"  #{t.get('rank','')} {t.get('original_title', t.get('canonical_title',''))[:70]}")
-
-    return topics, model_picks
+    return topics
 
 
 def _filter_instagram(
@@ -162,6 +154,27 @@ def _stage1_filter(
             if title and title not in seen_titles:
                 seen_titles.add(title)
                 deduped.append(item)
+
+        # GPT가 30개 미만을 반환하면, 입력 소스에서 보충
+        if len(deduped) < 30:
+            shortage = 30 - len(deduped)
+            # YouTube → 네이트판 → 뉴스 순으로 보충
+            backfill_sources = (youtube_videos or []) + (community_posts or []) + articles
+            for src in backfill_sources:
+                if len(deduped) >= 30:
+                    break
+                title = src.get("title", "").strip()
+                if title and title not in seen_titles:
+                    seen_titles.add(title)
+                    deduped.append({
+                        "title": title,
+                        "description": src.get("description", ""),
+                        "category": src.get("category", ""),
+                        "source_ref": src.get("source", ""),
+                        "reason": "자동 보충",
+                    })
+            log(f"[Stage 1] GPT가 {30 - shortage}개만 반환 → {shortage}개 자동 보충하여 {len(deduped)}개")
+
         return deduped[:30]
     except json.JSONDecodeError:
         log(f"[Stage 1] JSON 파싱 실패: {raw[:200]}")
@@ -203,58 +216,6 @@ def _stage2_select(
         log(f"[Stage 2] JSON 파싱 실패: {raw[:200]}")
         return []
 
-
-def _stage2_model_picks(
-    client: OpenAI,
-    top30_articles: list[dict],
-    filtered_sns: list[dict],
-) -> list[dict]:
-    """모델 자체 판단 Top 3 (취향 정보 없이 순수 프롬프트 기준)."""
-    plain_text = _build_plain_text(top30_articles, filtered_sns)
-
-    response = client.chat.completions.create(
-        model="gpt-4o",
-        messages=[
-            {"role": "system", "content": MODEL_PICKS_PROMPT},
-            {"role": "user", "content": plain_text},
-        ],
-        temperature=0.5,
-        response_format={"type": "json_object"},
-    )
-
-    raw = response.choices[0].message.content
-    try:
-        result = json.loads(raw)
-        if isinstance(result, list):
-            return result[:3]
-        elif isinstance(result, dict):
-            return result.get("topics", result.get("issues", []))[:3]
-        return []
-    except json.JSONDecodeError:
-        log(f"[Stage 2B] JSON 파싱 실패: {raw[:200]}")
-        return []
-
-
-def _build_plain_text(
-    top30_articles: list[dict],
-    filtered_sns: list[dict],
-) -> str:
-    """모델 자체 판단용: 취향 정보 없는 순수 후보 목록."""
-    lines = [f"=== 뉴스 ({len(top30_articles)}건) ==="]
-    for i, art in enumerate(top30_articles, 1):
-        title = art.get("title", art.get("canonical_title", ""))
-        desc = art.get("description", "")
-        category = art.get("category", "")
-        lines.append(f"{i}. [{category}] {title} | {desc[:200]}")
-
-    lines.append(f"\n=== 인스타그램 SNS ({len(filtered_sns)}건) ===")
-    for i, post in enumerate(filtered_sns, 1):
-        lines.append(
-            f"{i}. @{post.get('account', '')}: {post.get('caption', '')[:300]} "
-            f"{' '.join(post.get('hashtags', []))}"
-        )
-
-    return "\n".join(lines)
 
 
 def _enforce_diversity(topics: list[dict], max_per_category: int = 3) -> list[dict]:
