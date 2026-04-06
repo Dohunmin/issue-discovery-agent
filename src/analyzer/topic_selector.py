@@ -209,13 +209,27 @@ def _stage2_select(
         else:
             topics = []
 
-        # 카테고리 다양성 후처리: 동일 source_ref 유형(뉴스/SNS) 최대 비율 제한
+        # 후처리: 제목 중복 제거 + 카테고리 다양성
+        topics = _dedup_topics(topics)
         topics = _enforce_diversity(topics)
         return topics
     except json.JSONDecodeError:
         log(f"[Stage 2] JSON 파싱 실패: {raw[:200]}")
         return []
 
+
+
+def _dedup_topics(topics: list[dict]) -> list[dict]:
+    """제목 기반 중복 제거. GPT가 같은 이슈를 다른 rank로 반환하는 경우 방지."""
+    seen = set()
+    deduped = []
+    for t in topics:
+        title = t.get("original_title", t.get("canonical_title", "")).strip()
+        if not title or title in seen:
+            continue
+        seen.add(title)
+        deduped.append(t)
+    return deduped
 
 
 def _enforce_diversity(topics: list[dict], max_per_category: int = 3) -> list[dict]:
