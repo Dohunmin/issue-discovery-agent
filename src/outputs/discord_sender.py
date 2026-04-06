@@ -1,11 +1,11 @@
 import requests
-from src.config import DISCORD_WEBHOOK_URL
+from src.config import DISCORD_WEBHOOK_URLS
 from src.logger import log
 
 
 def send_to_discord(topics: list[dict]) -> None:
-    """선정된 이슈를 Discord 웹훅으로 5개씩 분할 전송한다."""
-    if not DISCORD_WEBHOOK_URL:
+    """선정된 이슈를 모든 Discord 웹훅으로 5개씩 분할 전송한다."""
+    if not DISCORD_WEBHOOK_URLS:
         log("[Discord] DISCORD_WEBHOOK_URL이 설정되지 않아 건너뜀")
         return
 
@@ -37,18 +37,19 @@ def send_to_discord(topics: list[dict]) -> None:
                 f"> **issue_hook:** {issue_hook}\n"
             )
 
-        _send_message("\n".join(parts), f"파트 {idx + 1}/{len(chunks)}")
+        _send_to_all("\n".join(parts), f"파트 {idx + 1}/{len(chunks)}")
 
 
-def _send_message(content: str, label: str) -> None:
-    """Discord 웹훅으로 메시지를 전송한다."""
-    response = requests.post(
-        DISCORD_WEBHOOK_URL,
-        json={"content": content},
-        timeout=10,
-    )
+def _send_to_all(content: str, label: str) -> None:
+    """모든 웹훅 URL로 메시지를 전송한다."""
+    for i, url in enumerate(DISCORD_WEBHOOK_URLS):
+        response = requests.post(
+            url,
+            json={"content": content},
+            timeout=10,
+        )
 
-    if response.status_code == 204:
-        log(f"[Discord] {label} 전송 완료")
-    else:
-        log(f"[Discord] {label} 전송 실패: {response.status_code} {response.text}")
+        if response.status_code == 204:
+            log(f"[Discord] {label} 전송 완료 (웹훅 {i + 1})")
+        else:
+            log(f"[Discord] {label} 전송 실패 (웹훅 {i + 1}): {response.status_code} {response.text}")

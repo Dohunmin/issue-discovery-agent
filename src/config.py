@@ -12,7 +12,12 @@ SPREADSHEET_NAME = "Perspective_DB"
 WORKSHEET_NAME = "Topic Recommender"
 
 # Discord
-DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "")
+# Discord 웹훅 (쉼표로 여러 개 지정 가능)
+DISCORD_WEBHOOK_URLS = [
+    url.strip()
+    for url in os.getenv("DISCORD_WEBHOOK_URL", "").split(",")
+    if url.strip()
+]
 
 # Instagram
 INSTAGRAM_SEED_ACCOUNTS = [
