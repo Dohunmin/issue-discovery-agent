@@ -209,8 +209,27 @@ def _stage2_select(
         else:
             topics = []
 
-        # 후처리: 제목 중복 제거 + 카테고리 다양성
+        # 후처리: 제목 중복 제거 + 10개 보충 + 카테고리 다양성
         topics = _dedup_topics(topics)
+
+        # 중복 제거로 10개 미만이 되면 Stage 1 후보에서 보충
+        if len(topics) < 10:
+            selected_titles = {t.get("original_title", t.get("canonical_title", "")).strip() for t in topics}
+            backfill_pool = top30_articles + filtered_sns
+            for item in backfill_pool:
+                if len(topics) >= 10:
+                    break
+                title = item.get("title", item.get("caption", "")).strip()
+                if title and title not in selected_titles:
+                    selected_titles.add(title)
+                    topics.append({
+                        "original_title": title,
+                        "why_now": "Stage 1에서 선별된 후보",
+                        "issue_hook": "",
+                        "source_ref": item.get("source_ref", item.get("source", "")),
+                    })
+            log(f"[Stage 2] 중복 제거 후 보충 → {len(topics)}개")
+
         topics = _enforce_diversity(topics)
         return topics
     except json.JSONDecodeError:
