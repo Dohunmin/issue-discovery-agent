@@ -225,6 +225,7 @@ def score_candidates(
     preference_data: dict,
     candidates: list[dict],
     text_key: str = "title",
+    label: str = "",
 ) -> list[dict]:
     """후보 토픽에 취향 점수(preference_score)를 추가한다.
 
@@ -233,6 +234,7 @@ def score_candidates(
         preference_data: load_preference_vector의 반환값 (single/multi mode)
         candidates: 후보 토픽 리스트
         text_key: 텍스트를 가져올 키 (title, canonical_title 등)
+        label: 로그 구분용 라벨 (예: "뉴스+유튜브+커뮤니티", "인스타")
 
     Returns:
         preference_score가 추가된 후보 리스트
@@ -278,7 +280,8 @@ def score_candidates(
 
     # 점수 로그
     scored = sorted(candidates, key=lambda x: x.get("preference_score", 0), reverse=True)
-    log("[Preference] 취향 점수 상위 5개:")
+    label_str = f" [{label}]" if label else ""
+    log(f"[Preference] 취향 점수 상위 5개{label_str}:")
     for c in scored[:5]:
         text = c.get(text_key, c.get("title", c.get("canonical_title", "")))
         log(f"  {c['preference_score']:.3f} | {text[:60]}")

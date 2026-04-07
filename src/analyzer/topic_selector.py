@@ -41,8 +41,14 @@ def select_topics(
     log("[Preference] 취향 벡터 로드 중...")
     pref_data = load_preference_vector(client)
     if pref_data:
-        top30_articles = score_candidates(client, pref_data, top30_articles, text_key="title")
-        filtered_sns = score_candidates(client, pref_data, filtered_sns, text_key="caption")
+        top30_articles = score_candidates(
+            client, pref_data, top30_articles, text_key="title",
+            label="뉴스+유튜브+커뮤니티 Top 30",
+        )
+        filtered_sns = score_candidates(
+            client, pref_data, filtered_sns, text_key="caption",
+            label="인스타 SNS",
+        )
 
     # Stage 2A: 취향 반영 Top 10
     log("[Stage 2A] 취향 반영 → Top 10 선정 중...")
