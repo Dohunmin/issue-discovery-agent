@@ -12,7 +12,7 @@ from src.config import (
 from src.logger import log
 
 POSTS_TO_SCAN = 10  # 많이 가져와서 날짜 필터로 거름
-DAYS_WINDOW = 7
+DAYS_WINDOW = 5
 COOKIES_FILE = Path(__file__).parent.parent.parent / ".instagram_cookies.json"
 
 
@@ -190,7 +190,7 @@ async def _scrape_account(page, account: str) -> list[dict]:
                 await page.goto(link, wait_until="domcontentloaded", timeout=20000)
                 await _human_delay(2.0, 4.0)
 
-                # 날짜 확인: 7일 이내 게시물만 수집 (고정 게시물 자동 제외)
+                # 날짜 확인: 5일 이내 게시물만 수집 (고정 게시물 자동 제외)
                 posted_at = ""
                 time_el = await page.query_selector("time[datetime]")
                 if time_el:
@@ -199,7 +199,7 @@ async def _scrape_account(page, account: str) -> list[dict]:
                         posted_at = dt_str
                         posted_dt = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
                         if posted_dt < cutoff:
-                            log(f"  @{account}: 스킵 (7일 초과) {dt_str[:10]}")
+                            log(f"  @{account}: 스킵 (5일 초과) {dt_str[:10]}")
                             continue
 
                 caption = await _extract_caption(page)

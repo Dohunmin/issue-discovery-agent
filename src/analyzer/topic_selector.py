@@ -164,8 +164,8 @@ def _stage1_filter(
         # GPT가 30개 미만을 반환하면, 입력 소스에서 보충
         if len(deduped) < 30:
             shortage = 30 - len(deduped)
-            # YouTube → 네이트판 → 뉴스 순으로 보충
-            backfill_sources = (youtube_videos or []) + (community_posts or []) + articles
+            # YouTube → 뉴스 순으로 보충
+            backfill_sources = (youtube_videos or []) + articles
             for src in backfill_sources:
                 if len(deduped) >= 30:
                     break
@@ -324,16 +324,7 @@ def _build_stage1_text(
                 f"{vid.get('channel', '')} | 조회수 {view_str}"
             )
 
-    # 2) 네이트판 — YouTube 다음
-    if community_posts:
-        pann_posts = [p for p in community_posts if p.get("source") == "natepann_hot"]
-        if pann_posts:
-            lines.append(f"\n=== 네이트판 실시간 인기 ({len(pann_posts)}건) ===")
-            lines.append("여초 커뮤니티 실시간 인기글. 2030 여성이 실제로 관심 갖는 주제를 반드시 선정하세요.")
-            for i, post in enumerate(pann_posts, 1):
-                lines.append(f"네이트판#{i}. {post.get('title', '')}")
-
-    # 3) 뉴스 — 제목만 (description 생략하여 토큰 절약)
+    # 2) 뉴스 — 제목만 (description 생략하여 토큰 절약)
     lines.append(f"\n=== 뉴스 기사 ({len(articles)}건) ===")
     for i, art in enumerate(articles, 1):
         trending_tag = " [TRENDING]" if art.get("trending") else ""

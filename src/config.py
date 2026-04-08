@@ -48,9 +48,8 @@ INSTAGRAM_PASSWORD = os.getenv("INSTAGRAM_PASSWORD", "")
 # ─────────────────────────────────────────────
 RSS_FEEDS = {
 
-    # AI·디지털이 일상을 바꾸는 이슈 (소스 축소 — 블로터 중복 제거)
+    # AI·디지털이 일상을 바꾸는 이슈 (산업지 톤 축소 — 블로터만 유지)
     "ai_society": [
-        "https://www.aitimes.com/rss/allArticle.xml",       # AI타임스 — 국내 AI 산업·정책
         "https://www.bloter.net/feed",                      # 블로터 — IT 심층 분석
     ],
 
@@ -69,17 +68,20 @@ RSS_FEEDS = {
         "https://www.khan.co.kr/rss/rssdata/it_news.xml",   # 경향 IT — 기술 사회적 맥락
     ],
 
-    # 미디어 생태계·정보 흐름
+    # 미디어 생태계·정보 흐름 (산업지 톤 축소 — 슬로우뉴스만 유지)
     "media_info": [
         "https://slownews.kr/feed",                         # 슬로우뉴스 — 미디어 비평
-        "https://www.techm.kr/rss/allArticle.xml",          # 테크M — 크리에이터 이코노미
     ],
 
-    # 실시간 화제·바이럴·밈 (구글뉴스 — 쿼리 세분화)
+    # 실시간 화제·바이럴·밈 (구글뉴스 — 쿼리 세분화, 비중 확대)
     "buzz": [
         "https://news.google.com/rss/search?q=화제+OR+논란+OR+밈+OR+챌린지+OR+바이럴&hl=ko&gl=KR&ceid=KR:ko",
         "https://news.google.com/rss/search?q=청년+취업+OR+부동산+OR+전세사기+OR+소비+트렌드&hl=ko&gl=KR&ceid=KR:ko",
         "https://news.google.com/rss/search?q=틱톡+OR+인스타+OR+유튜브+OR+숏폼+OR+챌린지+화제&hl=ko&gl=KR&ceid=KR:ko",
+        "https://news.google.com/rss/search?q=Z세대+OR+잘파세대+OR+MZ+화제&hl=ko&gl=KR&ceid=KR:ko",
+        "https://news.google.com/rss/search?q=요즘+유행+OR+신조어+OR+핫플+OR+오픈런&hl=ko&gl=KR&ceid=KR:ko",
+        "https://news.google.com/rss/search?q=데이팅앱+OR+연애+OR+결혼+트렌드&hl=ko&gl=KR&ceid=KR:ko",
+        "https://news.google.com/rss/search?q=K콘텐츠+OR+한드+OR+예능+화제&hl=ko&gl=KR&ceid=KR:ko",
     ],
 
 }
@@ -135,13 +137,11 @@ STAGE1_PROMPT = """당신은 한국 2030세대의 삶에 영향을 미치는 이
 소스별 특징:
 - 뉴스: 언론 보도 기반 이슈. [TRENDING] 태그가 붙은 기사는 Google Trends 인기 검색어와 매칭된 기사
 - YouTube 채널: 2030 이슈/트렌드를 다루는 채널의 최근 영상
-- 네이트판 인기: 여초 커뮤니티 실시간 인기글 (2030 여성이 관심 갖는 주제)
 
-커뮤니티/YouTube에서 화제인 주제가 뉴스에서도 보도되고 있다면, 그 이슈의 우선순위를 높이세요.
+YouTube에서 화제인 주제가 뉴스에서도 보도되고 있다면, 그 이슈의 우선순위를 높이세요.
 
 중요 — 소스 다양성: Top 30에 반드시 아래 비율을 지키세요:
 - YouTube 채널에서 최소 3~5개 선정 (이슈/트렌드 해설 영상)
-- 네이트판 인기글에서 최소 3~5개 선정 (2030 여성 관심사)
 - 나머지는 뉴스에서 자유롭게 선정
 뉴스만으로 30개를 채우지 마세요.
 
@@ -187,7 +187,7 @@ STAGE2_PROMPT = """당신은 한국 2030세대가 오늘 카톡/인스타에서 
 
 중요: SNS 콘텐츠는 2030세대가 실제로 화제로 삼고 있는 주제입니다.
 SNS에서 온 이슈가 품질 기준을 충족한다면 뉴스보다 우선적으로 포함하세요.
-최종 10개 중 SNS 출처가 최소 2~3개는 포함되는 것이 이상적입니다 (단, 품질이 낮으면 강제하지 마세요).
+최종 10개 중 SNS 출처가 최소 4개는 포함되는 것이 이상적입니다 (단, 품질이 낮으면 강제하지 마세요).
 
 선정 전, 각 후보에 아래 5가지 점수(1~3점)를 매기고 합산 상위 10개를 선정하세요:
 

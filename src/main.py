@@ -3,7 +3,6 @@
 from src.collectors.rss_collector import collect_rss
 from src.collectors.instagram_collector import collect_instagram_sync
 from src.collectors.youtube_collector import collect_youtube_channels
-from src.collectors.community_collector import collect_community
 from src.collectors.trends_collector import collect_trend_keywords, tag_trending_articles
 from src.analyzer.dedup import deduplicate_articles
 from src.analyzer.topic_selector import select_topics
@@ -21,9 +20,8 @@ def main():
     rss_articles = collect_rss()
     instagram_posts_by_account = collect_instagram_sync()
     youtube_videos = collect_youtube_channels()
-    community_posts = collect_community()
 
-    if not rss_articles and not instagram_posts_by_account and not youtube_videos and not community_posts:
+    if not rss_articles and not instagram_posts_by_account and not youtube_videos:
         logger.log("수집된 데이터가 없습니다. 종료합니다.")
         logger.close()
         return
@@ -39,7 +37,6 @@ def main():
     topics = select_topics(
         rss_articles, instagram_posts_by_account,
         youtube_videos=youtube_videos,
-        community_posts=community_posts,
     )
 
     if not topics:

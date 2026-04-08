@@ -28,7 +28,11 @@ class TaskLogger:
         try:
             print(message)
         except UnicodeEncodeError:
-            print(message.encode("utf-8", errors="replace").decode("utf-8"))
+            enc = getattr(sys.stdout, "encoding", "utf-8") or "utf-8"
+            sys.stdout.buffer.write(
+                (message + "\n").encode(enc, errors="replace")
+            )
+            sys.stdout.flush()
         self._file.write(message + "\n")
         self._file.flush()
 
