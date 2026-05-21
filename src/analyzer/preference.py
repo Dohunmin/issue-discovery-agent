@@ -67,7 +67,34 @@ def _cosine_similarity(a: list[float], b: list[float]) -> float:
 
 MULTI_CENTROID_THRESHOLD = 15  # 이 개수 이상이면 클러스터링 활성화
 MULTI_CENTROID_K = 3
-BAD_PENALTY_ALPHA = 0.3  # bad 유사도의 감점 비율 (0.3 = good의 30%만큼 차감)
+BAD_PENALTY_ALPHA = 1.2  # bad 유사도의 감점 비율. bad 패턴은 강하게 차감한다.
+BAD_HARD_FILTER_THRESHOLD = 0.38  # 이 이상 bad 유사도면 Stage 2 전에 제외
+BAD_NEAREST_HARD_FILTER_THRESHOLD = 0.58  # 개별 bad 이력 중 하나와 이 이상 가까우면 제외
+BAD_NEAREST_PENALTY_ALPHA = 0.8  # 개별 bad 이력 근접도 추가 감점
+
+
+def _normalize_title(text: str) -> str:
+    return "".join(str(text).lower().split())
+
+
+def _matches_bad_title(title: str, bad_titles: set[str]) -> bool:
+    norm_title = _normalize_title(title)
+    if not norm_title:
+        return False
+    if norm_title in bad_titles:
+        return True
+    if len(norm_title) < 12:
+        return False
+    return any(
+        len(bad_title) >= 12 and (bad_title in norm_title or norm_title in bad_title)
+        for bad_title in bad_titles
+    )
+
+
+def _max_similarity(vector: list[float], vectors: list[list[float]]) -> float:
+    if not vectors:
+        return 0.0
+    return max(_cosine_similarity(vector, other) for other in vectors)
 
 
 def load_preference_vector(client: OpenAI) -> dict | None:
@@ -134,16 +161,23 @@ def load_preference_vector(client: OpenAI) -> dict | None:
 
     log(f"[Preference] good 데이터 로드: Topic Recommender {len(good_texts)}개 + good_examples {len(example_texts)}개")
     log(f"[Preference] bad 데이터 로드: {len(bad_texts)}개")
+    bad_title_set = sorted({_normalize_title(t) for t in bad_texts if t})
 
     # 캐시 확인: good + bad 텍스트가 변하지 않았으면 이전 결과 재사용
     cache_key = hashlib.sha256(
-        ("|".join(sorted(all_texts)) + "||BAD||" + "|".join(sorted(bad_texts))).encode()
+        (
+            "preference-v2-nearest-bad||"
+            + "|".join(sorted(all_texts))
+            + "||BAD||"
+            + "|".join(sorted(bad_texts))
+        ).encode()
     ).hexdigest()
     if CACHE_PATH.exists():
         try:
             cached = json.loads(CACHE_PATH.read_text(encoding="utf-8"))
             if cached.get("key") == cache_key:
                 mode = cached.get("mode", "single")
+                cached["bad_titles"] = bad_title_set
                 log(f"[Preference] 캐시된 취향 벡터 사용 (mode={mode}, API 호출 생략)")
                 return cached
         except Exception:
@@ -170,16 +204,19 @@ def load_preference_vector(client: OpenAI) -> dict | None:
     else:
         result = _build_single_vector(embeddings_np, weights)
 
-    # Bad 벡터: 싫어하는 토픽의 평균 벡터
-    if bad_texts and len(bad_texts) >= 5:
+    # Bad 벡터: 싫어하는 토픽의 평균 벡터 (2개 이상이면 생성)
+    if bad_texts and len(bad_texts) >= 2:
         bad_embeddings = _get_embeddings_batch(client, bad_texts)
         if bad_embeddings:
             bad_vector = np.mean(bad_embeddings, axis=0).tolist()
             result["bad_vector"] = bad_vector
+            result["bad_embeddings"] = bad_embeddings
+            result["bad_texts"] = bad_texts
             log(f"[Preference] bad 벡터 생성 완료 ({len(bad_texts)}개 기반)")
 
     # 캐시 저장
     result["key"] = cache_key
+    result["bad_titles"] = bad_title_set
     CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
     CACHE_PATH.write_text(json.dumps(result), encoding="utf-8")
 
@@ -240,8 +277,10 @@ def score_candidates(
         preference_score가 추가된 후보 리스트
     """
     texts = []
+    candidate_titles = []
     for c in candidates:
         primary = c.get(text_key, c.get("title", c.get("canonical_title", "")))
+        candidate_titles.append(primary)
         if not primary:
             texts.append("")
             continue
@@ -260,8 +299,24 @@ def score_candidates(
 
     mode = preference_data.get("mode", "single")
     bad_vector = preference_data.get("bad_vector")
+    bad_embeddings = preference_data.get("bad_embeddings", [])
+    bad_titles = set(preference_data.get("bad_titles", []))
 
     for i, c in enumerate(candidates):
+        if _matches_bad_title(candidate_titles[i], bad_titles):
+            c["blocked_by_bad_history"] = True
+            c["bad_similarity"] = 1.0
+            c["preference_score"] = -999.0
+            continue
+
+        nearest_bad_score = _max_similarity(embeddings[i], bad_embeddings)
+        if nearest_bad_score >= BAD_NEAREST_HARD_FILTER_THRESHOLD:
+            c["blocked_by_bad_nearest"] = round(nearest_bad_score, 4)
+            c["bad_nearest_similarity"] = round(nearest_bad_score, 4)
+            c["bad_similarity"] = 1.0
+            c["preference_score"] = -999.0
+            continue
+
         # good 점수
         if mode == "multi":
             centroids = preference_data["centroids"]
@@ -272,7 +327,13 @@ def score_candidates(
         # bad 감점: good과 비슷한 주제라도 bad 패턴이면 점수 차감
         if bad_vector:
             bad_score = _cosine_similarity(bad_vector, embeddings[i])
-            score = good_score - BAD_PENALTY_ALPHA * bad_score
+            score = (
+                good_score
+                - BAD_PENALTY_ALPHA * bad_score
+                - BAD_NEAREST_PENALTY_ALPHA * nearest_bad_score
+            )
+            c["bad_similarity"] = round(bad_score, 4)
+            c["bad_nearest_similarity"] = round(nearest_bad_score, 4)
         else:
             score = good_score
 
@@ -282,6 +343,12 @@ def score_candidates(
     scored = sorted(candidates, key=lambda x: x.get("preference_score", 0), reverse=True)
     label_str = f" [{label}]" if label else ""
     log(f"[Preference] 취향 점수 상위 5개{label_str}:")
+    blocked_count = sum(1 for c in candidates if c.get("blocked_by_bad_history"))
+    if blocked_count:
+        log(f"[Preference] bad 이력 제목 exact 차단: {blocked_count}개{label_str}")
+    nearest_blocked_count = sum(1 for c in candidates if c.get("blocked_by_bad_nearest"))
+    if nearest_blocked_count:
+        log(f"[Preference] bad 이력 근접 차단: {nearest_blocked_count}개{label_str}")
     for c in scored[:5]:
         text = c.get(text_key, c.get("title", c.get("canonical_title", "")))
         log(f"  {c['preference_score']:.3f} | {text[:60]}")
